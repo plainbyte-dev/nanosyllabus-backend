@@ -1,0 +1,24 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+alembic
+psycopg2-binary
+python-multipart
+python-dotenv
+pydantic
+pydantic-settings
+
+# File parsing
+pypdf
+python-docx
+
+# Gemini embeddings
+google-generativeai
+
+# Pinecone
+pinecone-client
+
+# Auth
+python-jose[cryptography]
+passlib[bcrypt]
