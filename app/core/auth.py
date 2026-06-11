@@ -69,3 +69,13 @@ def get_current_teacher_id(payload: dict = Depends(_get_payload)) -> str:
     if role != "teacher":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires 'teacher' role")
     return user_id
+
+
+def get_current_student_id(payload: dict = Depends(_get_payload)) -> str:
+    user_id: str = payload.get("sub")
+    role: str = payload.get("role")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    if role != "student":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires 'student' role")
+    return user_id

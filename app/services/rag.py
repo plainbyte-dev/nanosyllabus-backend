@@ -181,6 +181,33 @@ async def query(
     ]
 
 
+async def generate_answer(question: str, chunks: list[dict]) -> str:
+    """Generate a grounded answer from retrieved notebook chunks."""
+    context = "\n\n---\n\n".join(
+        f"Source {i + 1} - {c['chapter_title']}:\n{c['text']}"
+        for i, c in enumerate(chunks)
+    )
+    prompt = f"""
+You are a teacher's AI clone helping a student.
+Answer only from the provided notebook context. If the context is not enough,
+say that the notebook does not contain enough information and suggest what to review.
+Be clear, step-by-step, and concise.
+
+Notebook context:
+{context}
+
+Student question:
+{question}
+""".strip()
+
+    def _generate() -> str:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text or "I could not generate an answer from the retrieved notebook context."
+
+    return await asyncio.get_event_loop().run_in_executor(None, _generate)
+
+
 async def delete_document(document_id: str, notebook_id: str) -> None:
     """Delete all vectors belonging to a document."""
     index = _get_index()

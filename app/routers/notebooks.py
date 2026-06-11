@@ -7,10 +7,11 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.auth import get_current_teacher_id
+from app.core.auth import get_current_student_id, get_current_teacher_id
 from app.core.database import get_db
 from app.models.document import Document
 from app.models.notebook import Notebook
+from app.models.User import User
 from app.schemas.notebook import (
     ChatRequest, ChatResponse, DocumentOut,
     NotebookCreate, NotebookOut, NotebookSummary, NotebookUpdate, SourceChunk,
@@ -19,6 +20,7 @@ from app.services import parser, rag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notebooks", tags=["notebooks"])
+student_router = APIRouter(prefix="/student", tags=["student"])
 
 
 async def _get_notebook_or_404(
@@ -296,11 +298,119 @@ async def chat_with_notebook(
             answer="No relevant content found in this notebook for your question.",
             sources=[],
         )
-    context = "\n\n---\n\n".join(
-        f"[{c['chapter_title']}]\n{c['text']}" for c in chunks
-    )
     return ChatResponse(
-        answer=f"Based on the notebook content:\n\n{context}",
+        answer=await rag.generate_answer(body.question, chunks),
+        sources=[
+            SourceChunk(
+                document_id=c["document_id"],
+                chapter_title=c["chapter_title"],
+                text=c["text"],
+                score=c["score"],
+            )
+            for c in chunks
+        ],
+    )
+
+
+@student_router.get("/teachers")
+async def list_published_teachers(
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(User, func.count(Notebook.id).label("notebook_count"))
+        .join(Notebook, Notebook.teacher_id == User.id)
+        .where(User.role == "teacher", Notebook.published.is_(True))
+        .group_by(User.id)
+        .order_by(User.name.asc())
+    )
+    return [
+        {
+            "id": teacher.id,
+            "name": teacher.name or teacher.email,
+            "email": teacher.email,
+            "picture": teacher.picture,
+            "notebook_count": notebook_count,
+        }
+        for teacher, notebook_count in result.all()
+    ]
+
+
+@student_router.get("/teachers/{teacher_id}/notebooks", response_model=list[NotebookSummary])
+async def list_teacher_published_notebooks(
+    teacher_id: str,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook, func.count(Document.id).label("doc_count"))
+        .outerjoin(Document, Document.notebook_id == Notebook.id)
+        .where(Notebook.teacher_id == teacher_id, Notebook.published.is_(True))
+        .group_by(Notebook.id)
+        .order_by(Notebook.updated_at.desc())
+    )
+    rows = result.all()
+    return [
+        NotebookSummary(
+            id=nb.id, teacher_id=nb.teacher_id, title=nb.title,
+            subject=nb.subject, description=nb.description,
+            difficulty=nb.difficulty, is_free=nb.is_free,
+            published=nb.published, student_count=nb.student_count,
+            views=nb.views, rating=nb.rating, doc_count=doc_count,
+            updated_at=nb.updated_at,
+        )
+        for nb, doc_count in rows
+    ]
+
+
+@student_router.get("/notebooks/{notebook_id}", response_model=NotebookOut)
+async def get_published_notebook(
+    notebook_id: str,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook)
+        .options(selectinload(Notebook.documents))
+        .where(Notebook.id == notebook_id, Notebook.published.is_(True))
+    )
+    nb = result.scalar_one_or_none()
+    if not nb:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    nb.views += 1
+    await db.commit()
+    await db.refresh(nb)
+    return nb
+
+
+@student_router.post("/notebooks/{notebook_id}/chat", response_model=ChatResponse)
+async def student_chat_with_notebook(
+    notebook_id: str,
+    body: ChatRequest,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook).where(Notebook.id == notebook_id, Notebook.published.is_(True))
+    )
+    nb = result.scalar_one_or_none()
+    if not nb:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    chunks = await rag.query(
+        notebook_id=notebook_id,
+        question=body.question,
+        top_k=body.top_k,
+    )
+    if not chunks:
+        return ChatResponse(
+            answer="I could not find relevant content in this notebook for that question.",
+            sources=[],
+        )
+
+    return ChatResponse(
+        answer=await rag.generate_answer(body.question, chunks),
         sources=[
             SourceChunk(
                 document_id=c["document_id"],
