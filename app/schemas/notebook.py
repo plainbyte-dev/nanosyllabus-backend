@@ -5,9 +5,16 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 
+# ── Shared base ───────────────────────────────────────────────────────────────
+
+class OrmBase(BaseModel):
+    """from_attributes=True causes Pydantic v2 to coerce UUID → str automatically."""
+    model_config = {"from_attributes": True}
+
+
 # ── Document schemas ──────────────────────────────────────────────────────────
 
-class DocumentOut(BaseModel):
+class DocumentOut(OrmBase):
     id: str
     notebook_id: str
     chapter_title: str
@@ -18,8 +25,6 @@ class DocumentOut(BaseModel):
     rag_status: str
     rag_chunk_count: int
     created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 # ── Notebook schemas ──────────────────────────────────────────────────────────
@@ -48,7 +53,7 @@ class NotebookUpdate(BaseModel):
     published: Optional[bool] = None
 
 
-class NotebookOut(BaseModel):
+class NotebookOut(OrmBase):
     id: str
     teacher_id: str
     title: str
@@ -65,11 +70,8 @@ class NotebookOut(BaseModel):
     updated_at: datetime
     documents: list[DocumentOut] = []
 
-    model_config = {"from_attributes": True}
 
-
-class NotebookSummary(BaseModel):
-    """Lightweight listing — no documents."""
+class NotebookSummary(OrmBase):
     id: str
     teacher_id: str
     title: str
@@ -83,8 +85,6 @@ class NotebookSummary(BaseModel):
     rating: float
     doc_count: int
     updated_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 # ── RAG / Chat schemas ────────────────────────────────────────────────────────

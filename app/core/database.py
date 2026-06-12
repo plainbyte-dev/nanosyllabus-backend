@@ -8,12 +8,12 @@ print("DATABASE_URL =", settings.DATABASE_URL)
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,          # don't let this grow unbounded
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=1800,    # recycle connections every 30 min
+    pool_pre_ping=True,   # detect stale connections
 )
-
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -40,5 +40,5 @@ async def get_db() -> AsyncSession:
 async def create_tables():
     """Called on startup to create all tables."""
     async with engine.begin() as conn:
-        from app.models import notebook, document  # noqa: F401 — register models
+        from app.models import User, notebook, document  # noqa: F401 - register models
         await conn.run_sync(Base.metadata.create_all)

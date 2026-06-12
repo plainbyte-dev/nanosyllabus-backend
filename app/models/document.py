@@ -11,22 +11,21 @@ from app.core.database import Base
 class Document(Base):
     __tablename__ = "documents"
 
-    id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    notebook_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
+    notebook_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("notebooks.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     chapter_title: Mapped[str] = mapped_column(String(500), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
-    file_type: Mapped[str] = mapped_column(String(20), nullable=False)  # pdf | docx | txt
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     char_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    # RAG status
     rag_status: Mapped[str] = mapped_column(
         SAEnum("pending", "processing", "indexed", "failed", name="rag_status_enum"),
         default="pending",
@@ -34,11 +33,10 @@ class Document(Base):
     )
     rag_chunk_count: Mapped[int] = mapped_column(Integer, default=0)
 
-    raw_text: Mapped[str] = mapped_column(Text, nullable=True)  # extracted text stored for re-indexing
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
-    # Relationship
     notebook: Mapped["Notebook"] = relationship("Notebook", back_populates="documents")  # noqa: F821

@@ -7,10 +7,11 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.auth import get_current_teacher_id
+from app.core.auth import get_current_student_id, get_current_teacher_id
 from app.core.database import get_db
 from app.models.document import Document
 from app.models.notebook import Notebook
+from app.models.User import User, RoleEnum
 from app.schemas.notebook import (
     ChatRequest, ChatResponse, DocumentOut,
     NotebookCreate, NotebookOut, NotebookSummary, NotebookUpdate, SourceChunk,
@@ -19,7 +20,65 @@ from app.services import parser, rag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notebooks", tags=["notebooks"])
+student_router = APIRouter(prefix="/student", tags=["student"])
 
+
+# ── Serialisation helpers ─────────────────────────────────────────────────────
+
+def doc_out(d: Document) -> DocumentOut:
+    return DocumentOut(
+        id=str(d.id),
+        notebook_id=str(d.notebook_id),
+        chapter_title=d.chapter_title,
+        original_filename=d.original_filename,
+        file_type=d.file_type,
+        page_count=d.page_count,
+        char_count=d.char_count,
+        rag_status=d.rag_status,
+        rag_chunk_count=d.rag_chunk_count,
+        created_at=d.created_at,
+    )
+
+
+def nb_out(nb: Notebook) -> NotebookOut:
+    return NotebookOut(
+        id=str(nb.id),
+        teacher_id=str(nb.teacher_id),
+        title=nb.title,
+        subject=nb.subject,
+        description=nb.description,
+        difficulty=nb.difficulty,
+        is_free=nb.is_free,
+        published=nb.published,
+        student_count=nb.student_count,
+        views=nb.views,
+        rating=nb.rating,
+        rating_count=nb.rating_count,
+        created_at=nb.created_at,
+        updated_at=nb.updated_at,
+        documents=[doc_out(d) for d in (nb.documents or [])],
+    )
+
+
+def nb_summary(nb: Notebook, doc_count: int) -> NotebookSummary:
+    return NotebookSummary(
+        id=str(nb.id),
+        teacher_id=str(nb.teacher_id),
+        title=nb.title,
+        subject=nb.subject,
+        description=nb.description,
+        difficulty=nb.difficulty,
+        is_free=nb.is_free,
+        published=nb.published,
+        student_count=nb.student_count,
+        views=nb.views,
+        rating=nb.rating,
+        doc_count=doc_count,
+        updated_at=nb.updated_at,
+    )
+
+
+# ── Shared helper ─────────────────────────────────────────────────────────────
 
 async def _get_notebook_or_404(
     notebook_id: str,
@@ -40,6 +99,8 @@ async def _get_notebook_or_404(
     return nb
 
 
+# ── Teacher notebook endpoints ────────────────────────────────────────────────
+
 @router.post("/", response_model=NotebookOut, status_code=status.HTTP_201_CREATED)
 async def create_notebook(
     body: NotebookCreate,
@@ -54,13 +115,10 @@ async def create_notebook(
         difficulty=body.difficulty,
         is_free=body.is_free,
     )
-
     db.add(nb)
-
     await db.commit()
     await db.refresh(nb, ["documents"])
-
-    return nb
+    return nb_out(nb)
 
 
 @router.get("/", response_model=list[NotebookSummary])
@@ -75,18 +133,7 @@ async def list_notebooks(
         .group_by(Notebook.id)
         .order_by(Notebook.updated_at.desc())
     )
-    rows = result.all()
-    return [
-        NotebookSummary(
-            id=nb.id, teacher_id=nb.teacher_id, title=nb.title,
-            subject=nb.subject, description=nb.description,
-            difficulty=nb.difficulty, is_free=nb.is_free,
-            published=nb.published, student_count=nb.student_count,
-            views=nb.views, rating=nb.rating, doc_count=doc_count,
-            updated_at=nb.updated_at,
-        )
-        for nb, doc_count in rows
-    ]
+    return [nb_summary(nb, doc_count) for nb, doc_count in result.all()]
 
 
 @router.get("/{notebook_id}", response_model=NotebookOut)
@@ -95,7 +142,8 @@ async def get_notebook(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _get_notebook_or_404(notebook_id, teacher_id, db, load_docs=True)
+    nb = await _get_notebook_or_404(notebook_id, teacher_id, db, load_docs=True)
+    return nb_out(nb)
 
 
 @router.patch("/{notebook_id}", response_model=NotebookOut)
@@ -105,20 +153,12 @@ async def update_notebook(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    nb = await _get_notebook_or_404(
-        notebook_id,
-        teacher_id,
-        db,
-        load_docs=True,
-    )
-
+    nb = await _get_notebook_or_404(notebook_id, teacher_id, db, load_docs=True)
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(nb, field, value)
-
     await db.commit()
-    await db.refresh(nb)
-
-    return nb
+    await db.refresh(nb, ["documents"])
+    return nb_out(nb)
 
 
 @router.delete("/{notebook_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -127,22 +167,12 @@ async def delete_notebook(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    nb = await _get_notebook_or_404(
-        notebook_id,
-        teacher_id,
-        db,
-    )
-
+    nb = await _get_notebook_or_404(notebook_id, teacher_id, db)
     await db.delete(nb)
-
     try:
         await rag.delete_notebook(notebook_id)
     except Exception:
-        logger.warning(
-            "Failed to delete Pinecone namespace %s",
-            notebook_id,
-        )
-
+        logger.warning("Failed to delete Pinecone namespace %s", notebook_id)
     await db.commit()
 
 
@@ -152,20 +182,14 @@ async def toggle_publish(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    nb = await _get_notebook_or_404(
-        notebook_id,
-        teacher_id,
-        db,
-        load_docs=True,
-    )
-
+    nb = await _get_notebook_or_404(notebook_id, teacher_id, db, load_docs=True)
     nb.published = not nb.published
-
     await db.commit()
-    await db.refresh(nb)
+    await db.refresh(nb, ["documents"])
+    return nb_out(nb)
 
-    return nb
 
+# ── Document endpoints ────────────────────────────────────────────────────────
 
 @router.post(
     "/{notebook_id}/documents",
@@ -179,11 +203,7 @@ async def upload_document(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_notebook_or_404(
-        notebook_id,
-        teacher_id,
-        db,
-    )
+    await _get_notebook_or_404(notebook_id, teacher_id, db)
 
     raw_text, file_type, page_count = await parser.extract_text(file)
 
@@ -203,9 +223,7 @@ async def upload_document(
         raw_text=raw_text,
         rag_status="processing",
     )
-
     db.add(doc)
-
     await db.flush()
 
     try:
@@ -215,22 +233,16 @@ async def upload_document(
             chapter_title=chapter_title,
             text=raw_text,
         )
-
         doc.rag_status = "indexed"
         doc.rag_chunk_count = chunk_count
-
-    except Exception as e:
-        logger.exception(
-            "RAG indexing failed for doc %s",
-            doc.id,
-        )
-
+    except Exception:
+        logger.exception("RAG indexing failed for doc %s", doc.id)
         doc.rag_status = "failed"
 
     await db.commit()
     await db.refresh(doc)
+    return doc_out(doc)
 
-    return doc
 
 @router.delete(
     "/{notebook_id}/documents/{document_id}",
@@ -242,11 +254,7 @@ async def delete_document(
     teacher_id: str = Depends(get_current_teacher_id),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_notebook_or_404(
-        notebook_id,
-        teacher_id,
-        db,
-    )
+    await _get_notebook_or_404(notebook_id, teacher_id, db)
 
     result = await db.execute(
         select(Document).where(
@@ -254,29 +262,19 @@ async def delete_document(
             Document.notebook_id == notebook_id,
         )
     )
-
     doc = result.scalar_one_or_none()
-
     if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
+        raise HTTPException(status_code=404, detail="Document not found")
 
     await db.delete(doc)
-
     try:
-        await rag.delete_document(
-            document_id,
-            notebook_id,
-        )
+        await rag.delete_document(document_id, notebook_id)
     except Exception:
-        logger.warning(
-            "Failed to delete Pinecone vectors for doc %s",
-            document_id,
-        )
-
+        logger.warning("Failed to delete Pinecone vectors for doc %s", document_id)
     await db.commit()
+
+
+# ── Chat endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/{notebook_id}/chat", response_model=ChatResponse)
 async def chat_with_notebook(
@@ -296,11 +294,8 @@ async def chat_with_notebook(
             answer="No relevant content found in this notebook for your question.",
             sources=[],
         )
-    context = "\n\n---\n\n".join(
-        f"[{c['chapter_title']}]\n{c['text']}" for c in chunks
-    )
     return ChatResponse(
-        answer=f"Based on the notebook content:\n\n{context}",
+        answer=await rag.generate_answer(body.question, chunks),
         sources=[
             SourceChunk(
                 document_id=c["document_id"],
@@ -311,3 +306,131 @@ async def chat_with_notebook(
             for c in chunks
         ],
     )
+
+
+# ── Student endpoints ─────────────────────────────────────────────────────────
+
+@student_router.get("/teachers")
+async def list_published_teachers(
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(User, func.count(Notebook.id).label("notebook_count"))
+        .join(Notebook, Notebook.teacher_id == User.id)
+        .where(User.role == "teacher", Notebook.published.is_(True))
+        .group_by(User.id)
+        .order_by(User.name.asc())
+    )
+    return [
+        {
+            "id": str(teacher.id),
+            "name": teacher.name or teacher.email,
+            "email": teacher.email,
+            "picture": teacher.picture,
+            "notebook_count": notebook_count,
+        }
+        for teacher, notebook_count in result.all()
+    ]
+
+
+@student_router.get("/teachers/{teacher_id}/notebooks", response_model=list[NotebookSummary])
+async def list_teacher_published_notebooks(
+    teacher_id: str,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook, func.count(Document.id).label("doc_count"))
+        .outerjoin(Document, Document.notebook_id == Notebook.id)
+        .where(Notebook.teacher_id == teacher_id, Notebook.published.is_(True))
+        .group_by(Notebook.id)
+        .order_by(Notebook.updated_at.desc())
+    )
+    return [nb_summary(nb, doc_count) for nb, doc_count in result.all()]
+
+
+@student_router.get("/notebooks/{notebook_id}", response_model=NotebookOut)
+async def get_published_notebook(
+    notebook_id: str,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook)
+        .options(selectinload(Notebook.documents))
+        .where(Notebook.id == notebook_id, Notebook.published.is_(True))
+    )
+    nb = result.scalar_one_or_none()
+    if not nb:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    nb.views += 1
+    await db.commit()
+    await db.refresh(nb, ["documents"])
+    return nb_out(nb)
+
+
+@student_router.post("/notebooks/{notebook_id}/chat", response_model=ChatResponse)
+async def student_chat_with_notebook(
+    notebook_id: str,
+    body: ChatRequest,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notebook).where(Notebook.id == notebook_id, Notebook.published.is_(True))
+    )
+    nb = result.scalar_one_or_none()
+    if not nb:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    chunks = await rag.query(
+        notebook_id=notebook_id,
+        question=body.question,
+        top_k=body.top_k,
+    )
+    if not chunks:
+        return ChatResponse(
+            answer="I could not find relevant content in this notebook for that question.",
+            sources=[],
+        )
+    return ChatResponse(
+        answer=await rag.generate_answer(body.question, chunks),
+        sources=[
+            SourceChunk(
+                document_id=c["document_id"],
+                chapter_title=c["chapter_title"],
+                text=c["text"],
+                score=c["score"],
+            )
+            for c in chunks
+        ],
+    )
+
+
+@student_router.get("/teachers/{teacher_id}")
+async def get_teacher_profile(
+    teacher_id: str,
+    _: str = Depends(get_current_student_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(User).where(User.id == teacher_id, User.role == RoleEnum.teacher)
+    )
+    teacher = result.scalar_one_or_none()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    nb_result = await db.execute(
+        select(func.count(Notebook.id))
+        .where(Notebook.teacher_id == teacher_id, Notebook.published.is_(True))
+    )
+    notebook_count = nb_result.scalar_one()
+
+    return {
+        "id": str(teacher.id),
+        "name": teacher.name or teacher.email,
+        "email": teacher.email,
+        "picture": teacher.picture,
+        "notebook_count": notebook_count,
+    }

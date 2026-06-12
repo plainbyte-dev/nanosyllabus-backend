@@ -11,10 +11,10 @@ from app.core.database import Base
 class Notebook(Base):
     __tablename__ = "notebooks"
 
-    id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4())
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    teacher_id: Mapped[uuid.UUID] = mapped_column(
+    UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
-    teacher_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     subject: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)

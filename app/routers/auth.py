@@ -1,11 +1,11 @@
 # app/routers/auth.py
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Literal, Optional
+from typing import Literal
 from google.oauth2 import id_token
 from google.auth.transport import requests as grequests
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.auth import create_access_token, get_current_user_id
 from app.core.database import get_db
@@ -22,24 +22,24 @@ class SetRoleIn(BaseModel):
     role: Literal["teacher", "student"]
 
 
-def _get_user_or_404(user_id: str, db: Session) -> User:
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-
 def _issue_token(user: User) -> dict:
     """Centralise token creation so both endpoints stay in sync."""
+    role = user.role.value if hasattr(user.role, "value") else user.role
     access_token = create_access_token({
         "sub": str(user.id),
-        "role": user.role,   # "teacher" | "student" | None
+        "role": role,   # "teacher" | "student" | None
         "email": user.email,
     })
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "role": user.role,
+        "role": role,
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "name": user.name,
+            "picture": user.picture,
+        },
     }
 
 
@@ -72,6 +72,8 @@ async def google_exchange(body: GoogleTokenIn, db: AsyncSession = Depends(get_db
         await db.refresh(user)
 
     return _issue_token(user)
+
+
 async def _get_user_or_404(user_id: str, db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()

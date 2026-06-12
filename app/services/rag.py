@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
-
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from pinecone import Pinecone, ServerlessSpec
 
 from app.core.config import settings
@@ -22,9 +22,9 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # ── Gemini config ─────────────────────────────────────────────────────────────
-genai.configure(api_key=settings.GEMINI_API_KEY)
-EMBED_MODEL = "models/text-embedding-004"  # 768-dim, free tier available
-EMBED_DIM = 768
+_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+EMBED_MODEL = "gemini-embedding-001"  # no "models/" prefix needed
+EMBED_DIM = 3072
 
 # ── Pinecone client (lazy-init) ───────────────────────────────────────────────
 _pc: Pinecone | None = None
@@ -33,6 +33,7 @@ _index: Any = None
 
 def _get_index():
     global _pc, _index
+
     if _index is not None:
         return _index
 
@@ -40,14 +41,33 @@ def _get_index():
     name = settings.PINECONE_INDEX_NAME
 
     existing = [i.name for i in _pc.list_indexes()]
+
+    # Create index if it doesn't exist
     if name not in existing:
+        logger.info("Creating Pinecone index '%s'...", name)
+
         _pc.create_index(
             name=name,
             dimension=EMBED_DIM,
             metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            spec=ServerlessSpec(
+                cloud="aws",
+                region="us-east-1",
+            ),
         )
-        logger.info("Created Pinecone index: %s", name)
+
+    # Inspect existing index
+    desc = _pc.describe_index(name)
+    logger.info("Pinecone index description: %s", desc)
+
+    # Validate dimension if available
+    if hasattr(desc, "dimension"):
+        if desc.dimension != EMBED_DIM:
+            raise RuntimeError(
+                f"Pinecone index dimension mismatch. "
+                f"Expected {EMBED_DIM}, got {desc.dimension}. "
+                f"Delete and recreate the index."
+            )
 
     _index = _pc.Index(name)
     return _index
@@ -70,32 +90,26 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> list[st
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """
-    Embed a batch of texts using Gemini text-embedding-004.
-    Gemini supports up to 100 texts per batch.
-    """
     all_embeddings: list[list[float]] = []
     batch_size = 50
-
     for i in range(0, len(texts), batch_size):
         batch = texts[i: i + batch_size]
-        result = genai.embed_content(
+        result = _client.models.embed_content(
             model=EMBED_MODEL,
-            content=batch,
-            task_type="retrieval_document",
+            contents=batch,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
         )
-        all_embeddings.extend(result["embedding"])
-
+        all_embeddings.extend([e.values for e in result.embeddings])
     return all_embeddings
 
 
 def _embed_query(text: str) -> list[float]:
-    result = genai.embed_content(
+    result = _client.models.embed_content(
         model=EMBED_MODEL,
-        content=text,
-        task_type="retrieval_query",
+        contents=text,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -179,6 +193,32 @@ async def query(
         }
         for m in results.matches
     ]
+
+
+async def generate_answer(question: str, chunks: list[dict]) -> str:
+    context = "\n\n---\n\n".join(
+        f"Source {i + 1} - {c['chapter_title']}:\n{c['text']}"
+        for i, c in enumerate(chunks)
+    )
+    prompt = f"""You are a teacher's AI clone helping a student.
+Answer only from the provided notebook context. If the context is not enough,
+say that the notebook does not contain enough information and suggest what to review.
+Be clear, step-by-step, and concise.
+
+Notebook context:
+{context}
+
+Student question:
+{question}""".strip()
+
+    def _generate() -> str:
+        response = _client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        return response.text or "I could not generate an answer from the retrieved notebook context."
+
+    return await asyncio.get_event_loop().run_in_executor(None, _generate)
 
 
 async def delete_document(document_id: str, notebook_id: str) -> None:
