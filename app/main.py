@@ -22,6 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(notebooks.public_router, prefix="/api/v1")
 app.include_router(notebooks.router, prefix="/api/v1")
 app.include_router(notebooks.student_router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")

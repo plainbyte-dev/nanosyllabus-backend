@@ -66,11 +66,15 @@ class NotebookOut(OrmBase):
     views: int
     rating: float
     rating_count: int
+
+    qr_code: Optional[str] = None
+    qr_url: Optional[str] = None
+
     created_at: datetime
     updated_at: datetime
     documents: list[DocumentOut] = []
-
-
+    
+    
 class NotebookSummary(OrmBase):
     id: str
     teacher_id: str
@@ -84,6 +88,10 @@ class NotebookSummary(OrmBase):
     views: int
     rating: float
     doc_count: int
+
+    qr_code: Optional[str] = None
+    qr_url: Optional[str] = None
+
     updated_at: datetime
 
 

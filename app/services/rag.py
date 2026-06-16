@@ -22,7 +22,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # ── Gemini config ─────────────────────────────────────────────────────────────
-_client = genai.Client(api_key=settings.GEMINI_API_KEY)
+_client = genai.Client(api_key="AQ.Ab8RN6KW8peHUiwJRooE7oPIiLjNqfWPtq5zz-JUtSnU7VixcA")
 EMBED_MODEL = "gemini-embedding-001"  # no "models/" prefix needed
 EMBED_DIM = 3072
 

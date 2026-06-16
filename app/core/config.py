@@ -14,5 +14,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+    TRAINING_FILE_MAX_MB: int = 50    # per file
+    PUBLISH_FILE_MAX_MB: int = 10     # per file
+    TRAINING_FILES_PER_SYLLABUS: int = 20
+    PUBLISH_FILES_PER_SYLLABUS: int = 50
 
 settings = Settings()
