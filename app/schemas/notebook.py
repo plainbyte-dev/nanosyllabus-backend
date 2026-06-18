@@ -5,6 +5,11 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 
+
+
+class AccessRequestCreate(BaseModel):
+    message: str = ""
+    access_type: Literal["view", "download", "chat"] = "view"
 # ── Shared base ───────────────────────────────────────────────────────────────
 
 class OrmBase(BaseModel):
@@ -25,7 +30,7 @@ class DocumentOut(OrmBase):
     rag_status: str
     rag_chunk_count: int
     created_at: datetime
-
+   
 
 # ── Notebook schemas ──────────────────────────────────────────────────────────
 

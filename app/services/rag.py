@@ -9,20 +9,21 @@ RAG service:
 """
 
 from __future__ import annotations
-
+from dotenv import load_dotenv
 import asyncio
 import logging
 from typing import Any
 from google import genai
 from google.genai import types
 from pinecone import Pinecone, ServerlessSpec
-
+load_dotenv()
 from app.core.config import settings
-
+import os
 logger = logging.getLogger(__name__)
 
 # ── Gemini config ─────────────────────────────────────────────────────────────
-_client = genai.Client(api_key="AQ.Ab8RN6KW8peHUiwJRooE7oPIiLjNqfWPtq5zz-JUtSnU7VixcA")
+_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
 EMBED_MODEL = "gemini-embedding-001"  # no "models/" prefix needed
 EMBED_DIM = 3072
 

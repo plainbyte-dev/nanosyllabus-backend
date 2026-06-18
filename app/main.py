@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import create_tables
-from app.routers import notebooks, auth, dashboard
+from app.routers import notebooks, auth, dashboard, user
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(notebooks.router, prefix="/api/v1")
 app.include_router(notebooks.student_router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
+app.include_router(user.router, prefix="/api/v1")
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")

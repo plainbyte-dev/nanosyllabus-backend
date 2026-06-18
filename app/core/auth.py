@@ -34,12 +34,14 @@ def _get_payload(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> dict:
     """Shared dependency: validates the bearer token and returns its payload."""
+
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return decode_token(credentials.credentials)
 
 
 def get_current_user_id(payload: dict = Depends(_get_payload)) -> str:
+   
     user_id: str = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")

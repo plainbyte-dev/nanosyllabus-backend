@@ -66,7 +66,6 @@ def _maybe_generate_qr(nb: Notebook) -> None:
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
-
 def doc_out(d: Document) -> DocumentOut:
     return DocumentOut(
         id=str(d.id),
@@ -78,7 +77,7 @@ def doc_out(d: Document) -> DocumentOut:
         char_count=d.char_count,
         rag_status=d.rag_status,
         rag_chunk_count=d.rag_chunk_count,
-        created_at=d.created_at,
+        created_at=d.created_at.isoformat() if d.created_at else None,
     )
 
 
@@ -98,8 +97,8 @@ def nb_out(nb: Notebook) -> NotebookOut:
         rating_count=nb.rating_count,
         qr_code=nb.qr_code,
         qr_url=nb.qr_url,
-        created_at=nb.created_at,
-        updated_at=nb.updated_at,
+        created_at=nb.created_at.isoformat() if nb.created_at else None,
+        updated_at=nb.updated_at.isoformat() if nb.updated_at else None,
         documents=[doc_out(d) for d in (nb.documents or [])],
     )
 
@@ -120,7 +119,7 @@ def nb_summary(nb: Notebook, doc_count: int) -> NotebookSummary:
         doc_count=doc_count,
         qr_code=nb.qr_code,
         qr_url=nb.qr_url,
-        updated_at=nb.updated_at,
+        updated_at=nb.updated_at.isoformat() if nb.updated_at else None,
     )
 
 
@@ -419,6 +418,8 @@ async def list_published_teachers(
         .group_by(User.id)
         .order_by(User.name.asc())
     )
+    
+    
     return [
         {"id": str(t.id), "name": t.name or t.email, "email": t.email, "picture": t.picture, "notebook_count": nc}
         for t, nc in result.all()
@@ -507,6 +508,8 @@ async def get_teacher_profile(
 
 
 # ── Public endpoints (no auth — accessible via QR scan) ──────────────────────
+
+
 
 @public_router.get("/{notebook_id}/download")
 async def download_notebook_pdf(
